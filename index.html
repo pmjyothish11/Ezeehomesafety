@@ -628,44 +628,15 @@
   }
 
   /* API KEY NOTICE */
-  .api-notice {
-    background: var(--gold-light);
-    border: 1.5px solid var(--gold);
+  .error-box {
+    background: #fdeaea;
+    border: 1.5px solid #c0392b;
     border-radius: 10px;
     padding: 14px 18px;
     font-size: 13px;
-    color: var(--dark);
-    margin-bottom: 32px;
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-  }
-
-  .api-notice .key-input {
-    margin-top: 10px;
-    display: flex;
-    gap: 8px;
-  }
-
-  .api-notice input {
-    flex: 1;
-    padding: 8px 12px;
-    border: 1.5px solid var(--gold);
-    border-radius: 6px;
-    font-size: 13px;
-    font-family: monospace;
-    background: var(--white);
-    outline: none;
-  }
-
-  .api-notice button {
-    padding: 8px 16px;
-    background: var(--navy);
-    color: var(--white);
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: pointer;
+    color: #6b1a1a;
+    margin-bottom: 16px;
+    display: none;
   }
 
   @media (max-width: 600px) {
@@ -692,16 +663,7 @@
       <p>Upload photos of each room. Our AI analyses every image against a clinical home safety framework and generates a personalised report with risk findings and prioritised actions.</p>
     </div>
 
-    <div class="api-notice" id="api-notice">
-      <div style="flex:1">
-        <strong>Enter your Anthropic API key to begin.</strong><br>
-        Your key is used only in your browser and never stored or sent anywhere except Anthropic's servers.
-        <div class="key-input">
-          <input type="password" id="api-key-input" placeholder="sk-ant-..." />
-          <button onclick="saveApiKey()">Save</button>
-        </div>
-      </div>
-    </div>
+    <div class="error-box" id="error-box"></div>
 
     <div class="details-row">
       <div class="field">
@@ -752,6 +714,8 @@
 </div>
 
 <script>
+const WORKER_URL = 'https://ezeehomesafety.pm-jyothish11.workers.dev/';
+
 const ROOMS = [
   { id: 'bathroom', name: 'Bathroom', icon: '🚿', risk: 'high', riskLabel: 'Highest risk', focus: '<strong>What to look for:</strong> Wet floor surfaces, absence of grab bars near toilet and shower, slippery tiles, step-in bathtub, low lighting, no non-slip mat, distance from door handle to support.' },
   { id: 'bedroom', name: 'Bedroom', icon: '🛏', risk: 'high', riskLabel: 'High risk', focus: '<strong>What to look for:</strong> Bed height, path from bed to bathroom at night, bedside lamp accessibility, loose rugs, clutter on floor, adequate lighting, position of switches.' },
@@ -765,18 +729,7 @@ const ROOMS = [
 
 let photos = {};
 let notes = {};
-let apiKey = '';
 let analysisResults = null;
-
-function saveApiKey() {
-  const val = document.getElementById('api-key-input').value.trim();
-  if (val.startsWith('sk-')) {
-    apiKey = val;
-    document.getElementById('api-notice').style.display = 'none';
-  } else {
-    alert('Please enter a valid Anthropic API key starting with sk-ant-');
-  }
-}
 
 function buildRooms() {
   const grid = document.getElementById('rooms-grid');
@@ -797,10 +750,17 @@ function buildRooms() {
       </div>
       <div class="room-body">
         <div class="room-focus">${room.focus}</div>
-        <div class="upload-zone" id="zone-${room.id}">
-          <input type="file" accept="image/*" multiple onchange="handleFiles(event, '${room.id}')" />
-          <div class="upload-icon">📷</div>
-          <div class="upload-text"><strong>Tap to add photos</strong><br>or drag and drop — multiple photos welcome</div>
+        <div style="display:flex;gap:10px;margin-bottom:0;">
+          <div class="upload-zone" style="flex:1;position:relative;" id="zone-${room.id}">
+            <input type="file" accept="image/*" multiple onchange="handleFiles(event, '${room.id}')" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" />
+            <div class="upload-icon">🖼</div>
+            <div class="upload-text"><strong>Upload photos</strong><br>from your gallery</div>
+          </div>
+          <div class="upload-zone" style="flex:1;position:relative;" id="camera-zone-${room.id}">
+            <input type="file" accept="image/*" capture="environment" onchange="handleFiles(event, '${room.id}')" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" />
+            <div class="upload-icon">📷</div>
+            <div class="upload-text"><strong>Take photo</strong><br>using camera</div>
+          </div>
         </div>
         <div class="photo-previews" id="previews-${room.id}"></div>
         <div class="room-notes">
@@ -871,22 +831,17 @@ function updateAnalyseButton() {
   const btn = document.getElementById('analyse-btn');
   const hint = document.getElementById('analyse-hint');
   const total = Object.values(photos).reduce((a, b) => a + (b || []).length, 0);
-  btn.disabled = total === 0 || !apiKey;
-  if (!apiKey) {
-    hint.textContent = 'Enter your API key above to begin';
-  } else if (total === 0) {
+  btn.disabled = total === 0;
+  if (total === 0) {
     hint.textContent = 'Upload at least one photo to begin';
   } else {
     hint.textContent = `${total} photo${total > 1 ? 's' : ''} ready · Analysis takes 30–60 seconds`;
   }
 }
 
-async function imageToBase64(dataUrl) {
-  return dataUrl.split(',')[1];
-}
-
 async function startAnalysis() {
-  if (!apiKey) { alert('Please enter your API key first.'); return; }
+  const errorBox = document.getElementById('error-box');
+  errorBox.style.display = 'none';
 
   document.getElementById('form-screen').style.display = 'none';
   const loading = document.getElementById('loading-screen');
@@ -910,7 +865,8 @@ async function startAnalysis() {
   const results = {};
 
   for (const room of roomsWithPhotos) {
-    document.getElementById(`step-${room.id}`).classList.add('active');
+    const stepEl = document.getElementById(`step-${room.id}`);
+    if (stepEl) stepEl.classList.add('active');
 
     const imageContents = await Promise.all(
       photos[room.id].map(async p => ({
@@ -918,7 +874,7 @@ async function startAnalysis() {
         source: {
           type: "base64",
           media_type: p.dataUrl.split(';')[0].split(':')[1],
-          data: await imageToBase64(p.dataUrl)
+          data: p.dataUrl.split(',')[1]
         }
       }))
     );
@@ -927,62 +883,86 @@ async function startAnalysis() {
     const mobilityText = mobility ? `\nClient mobility: ${mobility}` : '';
     const ageText = clientAge ? `\nClient age: ${clientAge}` : '';
 
-    const prompt = `You are a certified home safety specialist conducting an eldercare home safety assessment. Analyse these photos of the ${room.name} in an Indian Kerala home.${ageText}${mobilityText}${noteText}
+    const prompt = `You are a certified home safety specialist conducting an eldercare home safety assessment for LivEzee in Kerala, India. Analyse these photos of the ${room.name}.${ageText}${mobilityText}${noteText}
 
-Focus areas for ${room.name}: ${room.focus.replace(/<[^>]+>/g, '')}
+Focus areas: ${room.focus.replace(/<[^>]+>/g, '')}
 
-Provide a structured assessment as JSON only (no markdown, no backticks):
-{
-  "room": "${room.name}",
-  "overall_risk": "high|medium|low",
-  "risk_summary": "One sentence summary of the main concern",
-  "hazards_identified": ["List of specific hazards seen in the photos"],
-  "immediate_actions": ["Urgent things to fix within 1 week"],
-  "recommended_modifications": ["Longer term improvements"],
-  "kerala_specific_notes": ["Any Kerala-specific observations — wet bathroom floors, threshold steps, outdoor compound, etc."],
-  "positive_observations": ["Things that are already good or safe"]
-}
+Respond with JSON only — no markdown, no backticks, no explanation:
+{"room":"${room.name}","overall_risk":"high|medium|low","risk_summary":"One sentence","hazards_identified":[],"immediate_actions":[],"recommended_modifications":[],"kerala_specific_notes":[],"positive_observations":[]}
 
-Be specific to what you can actually see in the photos. If you cannot see a particular area clearly, say so. Do not fabricate findings.`;
+Be specific to what you actually see. Do not fabricate findings.`;
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-opus-4-6',
+          model: 'claude-sonnet-4-6',
           max_tokens: 1000,
           messages: [{ role: 'user', content: [...imageContents, { type: 'text', text: prompt }] }]
         })
       });
 
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
       const data = await response.json();
       const text = data.content?.[0]?.text || '{}';
       try {
-        results[room.id] = JSON.parse(text.replace(/```json|```/g, '').trim());
+        const cleaned = text.replace(/```json|```/g, '').trim();
+        results[room.id] = JSON.parse(cleaned);
       } catch {
-        results[room.id] = { room: room.name, overall_risk: 'medium', risk_summary: 'Analysis completed — see notes.', hazards_identified: [text], immediate_actions: [], recommended_modifications: [], kerala_specific_notes: [], positive_observations: [] };
+        results[room.id] = {
+          room: room.name,
+          overall_risk: 'medium',
+          risk_summary: 'Analysis completed.',
+          hazards_identified: [text.substring(0, 200)],
+          immediate_actions: [],
+          recommended_modifications: [],
+          kerala_specific_notes: [],
+          positive_observations: []
+        };
       }
     } catch (err) {
-      results[room.id] = { room: room.name, overall_risk: 'unknown', risk_summary: 'Could not analyse — check API key or internet connection.', hazards_identified: [], immediate_actions: [], recommended_modifications: [], kerala_specific_notes: [], positive_observations: [] };
+      results[room.id] = {
+        room: room.name,
+        overall_risk: 'unknown',
+        risk_summary: `Could not analyse: ${err.message}`,
+        hazards_identified: [],
+        immediate_actions: [],
+        recommended_modifications: [],
+        kerala_specific_notes: [],
+        positive_observations: []
+      };
     }
 
-    document.getElementById(`step-${room.id}`).classList.remove('active');
-    document.getElementById(`step-${room.id}`).classList.add('done');
+    if (stepEl) {
+      stepEl.classList.remove('active');
+      stepEl.classList.add('done');
+    }
   }
 
-  document.getElementById('step-summary').classList.add('active');
-  await new Promise(r => setTimeout(r, 800));
+  const summaryStep = document.getElementById('step-summary');
+  if (summaryStep) summaryStep.classList.add('active');
+  await new Promise(r => setTimeout(r, 600));
 
-  analysisResults = { clientName, clientAge, mobility, address, date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }), rooms: results };
+  analysisResults = {
+    clientName, clientAge, mobility, address,
+    date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+    rooms: results
+  };
 
   loading.classList.remove('visible');
-  renderResults(analysisResults);
+
+  try {
+    renderResults(analysisResults);
+  } catch (err) {
+    document.getElementById('form-screen').style.display = 'block';
+    errorBox.textContent = `Error displaying results: ${err.message}. Please try again.`;
+    errorBox.style.display = 'block';
+    window.scrollTo(0, 0);
+  }
 }
 
 function renderResults(data) {
